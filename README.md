@@ -12,6 +12,7 @@ An autonomous drone system built on **ROS 2 Jazzy**, **ArduPilot SITL**, and **G
 
 The drone navigates a user-defined survey grid, classifies each point as **water** or **soil** using computer vision, descends a sonar sensor into detected water bodies to measure depth, and generates a 3D visualization of the underwater topography with volume estimates.
 
+
 ---
 
 ## Key Features
