@@ -317,6 +317,14 @@ Open **http://localhost:5173** in your browser.
 
 ---
 
+## Documentation
+
+📄 **Full Technical Review:** [Drone-Based Reservoir Surveying](./Drone-Based%20Reservoir%20Surveying.pdf)
+
+This PDF contains a comprehensive technical analysis and detailed documentation of the drone-based reservoir surveying system.
+
+---
+
 ## License
 
 This project is provided as-is for educational and research purposes. ArduPilot and Gazebo plugins (`ardupilot_gazebo`) retain their respective upstream licenses.
