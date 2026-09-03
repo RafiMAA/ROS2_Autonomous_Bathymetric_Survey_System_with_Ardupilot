@@ -1,0 +1,138 @@
+\documentclass[10pt,twocolumn]{article}
+
+% ---------- Packages ----------
+\usepackage[letterpaper,margin=0.75in,columnsep=0.25in]{geometry}
+\usepackage{times}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{authblk}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{abstract}
+\usepackage{hyperref}
+\usepackage{cite}
+\usepackage{fancyhdr}
+
+% ---------- IEEE-like section formatting ----------
+\titleformat{\section}
+  {\normalfont\centering\small\bfseries}
+  {\Roman{section}.}{0.6em}{\MakeUppercase}
+\titleformat{\subsection}
+  {\normalfont\itshape\small}
+  {\Alph{subsection}.}{0.6em}{}
+\titlespacing*{\section}{0pt}{10pt}{6pt}
+\titlespacing*{\subsection}{0pt}{8pt}{4pt}
+
+\renewcommand{\abstractnamefont}{\normalfont\bfseries\itshape}
+\renewcommand{\abstracttextfont}{\normalfont\itshape}
+\setlength{\absleftindent}{0pt}
+\setlength{\absrightindent}{0pt}
+
+\pagestyle{plain}
+
+\setlength{\parindent}{1em}
+
+\title{\LARGE \textbf{Design and Implementation of a ROS~2-Based Autonomous Bathymetric Survey Drone Using ArduPilot, Visual Water Classification, and Sonar Depth Sensing}}
+
+\author[1]{\normalsize M.\ A.\ Abdul Rafi}
+\affil[1]{\normalsize Department of Computer Science \& Engineering}
+\affil[ ]{\normalsize University of Moratuwa, Sri Lanka}
+\affil[ ]{\normalsize Email: abdulr.23@cse.mrt.ac.lk}
+
+\date{}
+
+\begin{document}
+\twocolumn[
+\begin{@twocolumnfalse}
+\maketitle
+\begin{abstract}
+\noindent
+Traditional hydrographic surveys of reservoirs and inland water bodies rely on boat-mounted echo sounders, which are slow to deploy, hazardous in shallow or debris-laden waters, and impractical for frequent monitoring. This paper presents the design and implementation of a low-cost, fully autonomous bathymetric survey system built on a quadrotor drone, ROS~2 Jazzy, and ArduPilot Software-In-The-Loop (SITL), validated in a Gazebo Harmonic simulation environment. The system autonomously executes a user-defined grid survey: at each waypoint, an onboard gimbal camera classifies the surface beneath the drone as water or soil using HSV color-space thresholding; over detected water, a boom-mounted sonar descends and measures depth to the lakebed; the drone then ascends and proceeds to the next waypoint. A behaviour-driven state machine coordinates flight control through MAVROS, while a React-based Ground Control Station (GCS), connected via \texttt{rosbridge}, provides real-time telemetry, interactive waypoint planning, and a Three.js-based 3D reconstruction of the surveyed underwater terrain with automatic water-volume estimation. Simulated trials show that the system reliably discriminates water from soil, produces consistent depth profiles across a survey grid, and computes plausible reservoir volume estimates without operator intervention beyond initial mission planning. The results indicate that a coupled perception, sensing, and control pipeline built entirely on open-source robotics middleware can replicate core bathymetric-survey functionality at a fraction of the cost of dedicated hydrographic platforms.
+\end{abstract}
+\vspace{4pt}
+\textit{\textbf{Index Terms}---Bathymetric Survey, Autonomous UAV, ROS~2, ArduPilot, Sonar Depth Sensing, HSV Water Classification, MAVROS}
+\vspace{10pt}
+\end{@twocolumnfalse}
+]
+
+\section{Introduction}
+Bathymetric surveys, which map the depth and volume of water bodies, are essential for reservoir management, flood-risk assessment, dam safety monitoring, and environmental studies. Conventional bathymetric surveying relies on crewed or remotely operated boats fitted with single- or multi-beam echo sounders, which are costly to mobilize, difficult to operate in shallow, vegetated, or debris-strewn water, and generally unsuitable for small or frequently monitored reservoirs. These constraints motivate the search for lower-cost, more accessible survey platforms.
+
+Unmanned Aerial Vehicles (UAVs) offer an attractive alternative: they can be deployed rapidly, do not require water access for launch, and can cover irregular terrain that includes both dry and submerged sections. However, a UAV cannot measure depth directly from the air with a conventional echo sounder; it must first determine where water is present, and then bring a depth sensor into contact with, or close to, the water surface. This paper addresses that problem by combining onboard visual perception with a physically descending sonar probe, orchestrated by an autonomous mission state machine, and built entirely on ROS~2 Jazzy, ArduPilot SITL, and Gazebo Harmonic. The main contributions of this work are: (1) an integrated perception-to-actuation pipeline in which an HSV-based surface classifier gates a physical sonar-descent action within a single autonomous mission; (2) a state-machine-driven survey controller that sequences flight, classification, sonar measurement, and return-to-launch behaviours over an arbitrary user-defined waypoint grid; and (3) a browser-based Ground Control Station that visualizes both the live mission and the reconstructed 3D bathymetry, including automatic water-volume computation, without requiring specialized hydrographic software.
+
+\section{Literature Review}
+The Robot Operating System has become the de facto middleware for building modular, reusable robotic software, and its second generation, ROS~2, was designed from the ground up to meet the real-time, multi-robot, and safety-critical requirements that the original ROS could not satisfy \cite{macenski2022ros2}. Flight-control stacks such as the Pixhawk/ArduPilot family build on this open ecosystem, pairing an open-hardware autopilot with onboard computer-vision and sensor-fusion capability, and have become a standard platform for autonomous micro aerial vehicle research due to their extensibility and low cost \cite{meier2012pixhawk}.
+
+Mission-level coverage of an area of interest is a coverage path planning (CPP) problem: determining a path that visits all relevant points of a region while respecting the vehicle's motion constraints. Galceran and Carreras provide a comprehensive survey of CPP techniques, including grid-based decomposition methods that are directly applicable to structuring a UAV survey as a regular waypoint lattice \cite{galceran2013cpp}.
+
+For UAV-based bathymetry specifically, Bandini \emph{et al.} demonstrated that a UAV carrying a tethered, floating single-beam sonar can retrieve high-resolution, high-accuracy bathymetry of inland lakes and rivers, reporting depth errors around 2\% of measured depth and noting that this in-situ acoustic approach is largely unaffected by water turbidity, unlike purely optical methods \cite{bandini2018uavsonar}. A complementary body of work instead infers depth purely from aerial imagery: Specht \emph{et al.} review and compare photogrammetric and remote-sensing techniques for determining shallow waterbody depth from UAV images, noting that such optical methods remain limited by water-wave refraction and turbidity effects \cite{specht2022shallowdepth}. The present system adopts the acoustic, sonar-based approach of Bandini \emph{et al.} for depth accuracy, while using it only within water regions identified through vision.
+
+Distinguishing water from land in aerial or satellite imagery is itself a well-studied problem. Namikawa \emph{et al.} showed that transforming RGB imagery into the Hue-Saturation-Value (HSV) color space and thresholding the Hue channel, combined with a minimum-radiance criterion, provides a simple yet effective automated method for extracting water body surfaces from remotely sensed imagery at country scale \cite{namikawa2016hsvwater}. The present work adopts the same core idea, HSV-based Hue thresholding, at the scale of a single gimbal-camera frame to make a real-time water/soil decision at each survey waypoint.
+
+\section{Materials and Methods}
+
+\subsection{Hardware and Simulation Platform}
+The system uses a simulated Iris quadrotor operating under ArduPilot's Software-In-The-Loop (SITL) flight-dynamics model, connected to a Gazebo Harmonic world containing custom terrain meshes with an embedded water pit. The drone carries three simulated sensors: a two-axis gimbal-mounted RGB camera used for surface classification, a boom-mounted downward-facing sonar used for depth sensing, and an overhead camera used to capture a static map background for the ground control interface. All onboard autonomy runs under ROS~2 Jazzy with Cyclone DDS, matching a configuration deployable on a companion computer such as a Raspberry Pi in a physical system.
+
+\subsection{Software Architecture}
+The system bridges three domains: the ArduPilot flight-control firmware, the Gazebo physics simulation, and the ROS~2 autonomy stack. MAVROS translates MAVLink messages from ArduPilot into ROS~2 topics and services, exposing vehicle pose, flight mode, and arming state, and accepting guided-mode setpoints. Gazebo-to-ROS~2 bridges expose the gimbal camera, sonar, and overhead camera streams as ROS~2 image and range topics. A \texttt{rosbridge\_websocket} server exposes the ROS~2 graph to a browser-based React Ground Control Station (GCS) over WebSocket, allowing waypoint planning, mission commands, and live telemetry without any native ROS~2 client on the operator's machine.
+
+\subsection{Autonomous Survey State Machine}
+The core of the system is a bathymetric survey node that implements the mission as an explicit state machine: fly to waypoint (GUIDED mode) $\rightarrow$ pitch gimbal to nadir and classify surface $\rightarrow$ if water, descend sonar into the water body $\rightarrow$ measure depth $\rightarrow$ ascend $\rightarrow$ advance to next waypoint, repeating until the survey grid is exhausted, after which the drone returns to launch (RTL). The state machine subscribes to a JSON-encoded start command published by the GCS, defining the survey grid area and point spacing, and publishes progress, per-point measurements, and final results back to the GCS as JSON messages on dedicated topics, allowing the operator interface to remain decoupled from the internal mission logic.
+
+\subsection{Surface Classification}
+At each waypoint, the surface classifier node converts the current gimbal camera frame from RGB to HSV color space and applies a Hue-channel threshold, following the same principle used for large-scale water-body extraction from remotely sensed imagery \cite{namikawa2016hsvwater}. Pixels within the Hue range characteristic of open water are aggregated, and if the resulting water pixel fraction exceeds a configurable threshold, the waypoint is classified as \texttt{WATER}; otherwise it is classified as \texttt{SOIL}. This binary classification directly gates whether the sonar-descent phase of the state machine is triggered at that waypoint, avoiding unnecessary or unsafe sonar deployment over dry terrain.
+
+\subsection{Sonar-Based Depth Sensing and Volume Computation}
+Only at waypoints classified as water does the drone lower its boom-mounted sonar toward the surface. The sonar depth node continuously monitors the raw range reading and reports a status of \texttt{ABOVE\_WATER} or \texttt{SUBMERGED} depending on whether the returned range indicates contact with the water surface. Once submerged, the measured range is converted into a water depth relative to the sensed water surface; if the sonar remains above water, a sentinel depth of $-1$ is reported. After the full grid has been surveyed, each waypoint's depth measurement, together with its planar grid cell area, is used to compute an approximate water volume
+\begin{equation}
+V \approx \sum_{i=1}^{N} d_i \, A_i,
+\end{equation}
+where $d_i$ is the measured depth at grid cell $i$, $A_i$ is the planar area represented by that cell, and $N$ is the number of surveyed water cells; a fill-percentage metric is derived by comparing the computed volume against the maximum possible volume implied by the grid extent and maximum observed depth.
+
+\subsection{Ground Control Station Interface}
+The React-based GCS presents a 2D map canvas for interactive waypoint placement and drag-and-drop mission editing, a live telemetry bar showing position, altitude, heading, flight mode, and battery state, and a dedicated survey panel for configuring grid area and spacing and monitoring progress. On mission completion, a bathymetry panel displays the computed depth statistics and volume estimate, and an interactive Three.js visualization, implemented through \texttt{@react-three/fiber}, renders the reconstructed underwater terrain from the collected grid of depth samples, allowing the operator to inspect the surveyed lakebed topology directly in the browser.
+
+\section{Results and Discussion}
+
+\subsection{Performance Analysis}
+The system was evaluated through repeated simulated survey missions over a Gazebo world containing an embedded water pit of known approximate geometry.
+\begin{itemize}[leftmargin=1.1em,itemsep=1pt,topsep=2pt]
+\item \textbf{Surface classification}: the HSV Hue-thresholding classifier consistently and correctly distinguished the simulated water pit from surrounding soil terrain across repeated passes over the same grid.
+\item \textbf{Depth measurement consistency}: at waypoints classified as water, the sonar depth node reliably transitioned from \texttt{ABOVE\_WATER} to \texttt{SUBMERGED} during descent and produced depth readings consistent with the known depth profile of the simulated terrain.
+\item \textbf{End-to-end autonomy}: the full survey mission, spanning takeoff, grid traversal, per-point classification and sonar measurement, and return-to-launch, executed without manual intervention once initiated from the GCS, and produced a plausible aggregate volume and fill-percentage estimate for the surveyed water body.
+\end{itemize}
+
+\subsection{Challenges and Limitations}
+Several practical challenges arose during development. Because the surface classifier relies purely on Hue-channel thresholding, its accuracy is sensitive to simulated lighting conditions and camera exposure, mirroring the turbidity- and illumination-related limitations reported for purely optical water-detection and depth-inversion methods in the literature \cite{specht2022shallowdepth}. The sonar descent phase introduces a significant time cost per waypoint, since the drone must pause its horizontal traversal, lower the boom, wait for a stable submerged reading, and retract before continuing, which limits the spatial density of surveys achievable within a fixed flight-time budget. Additionally, the current volume-computation approach uses a simple grid-cell summation rather than a more rigorous interpolated surface integral, which may under- or over-estimate volume in regions of high depth variability between adjacent survey points.
+
+\section{Conclusion and Future Work}
+This work presented a fully autonomous, ROS~2-based bathymetric survey drone that couples HSV-based visual water classification with sonar-based depth sensing, orchestrated by a state-machine mission controller running on top of ArduPilot SITL and Gazebo Harmonic, and exposed through a browser-based Ground Control Station with live telemetry and 3D bathymetric visualization. Simulated trials show that the system can autonomously identify water bodies, measure depth at surveyed points, and compute a plausible water-volume estimate for a reservoir-like environment without operator intervention during flight.
+
+Future work will focus on replacing the current grid-cell summation with an interpolated surface-integration method for more accurate volume estimation, incorporating multispectral or texture-based cues alongside Hue thresholding to make surface classification more robust to lighting and turbidity variation, adapting the sonar-descent sequence to reduce per-waypoint survey time, and validating the system on physical hardware to quantify the transfer of the simulated results to real-world reservoir surveys.
+
+\bibliographystyle{IEEEtran}
+\begin{thebibliography}{6}
+
+\bibitem{macenski2022ros2}
+S.~Macenski, T.~Foote, B.~Gerkey, C.~Lalancette, and W.~Woodall, ``Robot Operating System 2: Design, architecture, and uses in the wild,'' \emph{Science Robotics}, vol.~7, no.~66, p.~eabm6074, 2022.
+
+\bibitem{meier2012pixhawk}
+L.~Meier, P.~Tanskanen, L.~Heng, G.~H.~Lee, F.~Fraundorfer, and M.~Pollefeys, ``PIXHAWK: A micro aerial vehicle design for autonomous flight using onboard computer vision,'' \emph{Autonomous Robots}, vol.~33, no.~1--2, pp.~21--39, 2012.
+
+\bibitem{galceran2013cpp}
+E.~Galceran and M.~Carreras, ``A survey on coverage path planning for robotics,'' \emph{Robotics and Autonomous Systems}, vol.~61, no.~12, pp.~1258--1276, 2013.
+
+\bibitem{bandini2018uavsonar}
+F.~Bandini, D.~Olesen, J.~Jakobsen, C.~M.~M.~Kittel, S.~Wang, M.~Garcia, and P.~Bauer-Gottwein, ``Bathymetry observations of inland water bodies using a tethered single-beam sonar controlled by an unmanned aerial vehicle,'' \emph{Hydrology and Earth System Sciences}, vol.~22, no.~8, pp.~4165--4181, 2018.
+
+\bibitem{namikawa2016hsvwater}
+L.~M.~Namikawa, T.~S.~K\"{o}rting, and E.~F.~Castejon, ``Water body extraction from RapidEye images: An automated methodology based on hue component of color transformation from RGB to HSV model,'' \emph{Brazilian Journal of Cartography}, vol.~68, no.~6, pp.~1097--1111, 2016.
+
+\bibitem{specht2022shallowdepth}
+M.~Specht, M.~Wi\'{s}niewska, A.~Stateczny, C.~Specht, B.~Szostak, O.~Lewicka, M.~Stateczny, S.~Wid\.{z}gowski, and A.~Halicki, ``Analysis of methods for determining shallow waterbody depths based on images taken by unmanned aerial vehicles,'' \emph{Sensors}, vol.~22, no.~5, p.~1844, 2022.
+
+\end{thebibliography}
+
+\end{document}
